@@ -13,14 +13,15 @@ use ::{
     },
 };
 
-mod serde_ucd;
+mod de_ucd;
 
 pub(crate) fn generate() -> anyhow::Result<()> {
     let agent = ureq::agent();
 
     const UNICODE_DATA: &str = "https://www.unicode.org/Public/UCD/latest/ucd/UnicodeData.txt";
     let unicode_data = download_text(&agent, UNICODE_DATA)?;
-    let lines = serde_ucd::from_str::<UnicodeDataLine>(&unicode_data)
+    let lines = de_ucd::lines::<UnicodeDataLine<'_>>(&unicode_data)
+        .collect::<Result<Vec<_>, _>>()
         .context("failed to parse UnicodeData.txt")?;
 
     let mut result = "use crate::Entry;".to_owned();

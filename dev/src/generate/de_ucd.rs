@@ -1,24 +1,58 @@
+//! Deserialization of files from the UCD with Serde.
+
 use ::{
-    anyhow::Context as _,
     serde::de::{self, Deserialize, Deserializer, Error as _},
     std::{
         error::Error as StdError,
         fmt::{self, Display, Formatter},
+        iter,
+        marker::PhantomData,
         str,
     },
 };
+pub(crate) fn lines<'file, Line: Deserialize<'file>>(file: &'file str) -> Lines<'file, Line> {
+    Lines {
+        inner: file.lines().enumerate(),
+        line: PhantomData,
+    }
+}
 
-pub(crate) fn from_str<'file, Line: Deserialize<'file>>(
-    file: &'file str,
-) -> anyhow::Result<Vec<Line>> {
-    file.lines()
-        .enumerate()
-        .map(|(i, line)| (i, line.split('#').next().unwrap()))
-        .filter(|(_, line)| !line.is_empty())
-        .map(|(i, line)| {
-            line_from_str(line).with_context(|| format!("failed to parse UCD file, line {}", i + 1))
-        })
-        .collect()
+pub(crate) struct Lines<'file, Line> {
+    inner: iter::Enumerate<str::Lines<'file>>,
+    line: PhantomData<fn() -> Line>,
+}
+
+impl<'file, Line: Deserialize<'file>> Iterator for Lines<'file, Line> {
+    type Item = Result<Line, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (i, line) = loop {
+            let (i, line) = self.inner.next()?;
+            let line = line.split('#').next().unwrap();
+            if !line.is_empty() {
+                break (i, line);
+            }
+        };
+        Some(line_from_str(line).map_err(|inner| Error { line: i + 1, inner }))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Error {
+    line: usize,
+    inner: UcdLineError,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "error deserializing UCD file on line {}", self.line)
+    }
+}
+
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&self.inner)
+    }
 }
 
 fn line_from_str<'line, Line: Deserialize<'line>>(line: &'line str) -> Result<Line, UcdLineError> {
