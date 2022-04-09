@@ -9,6 +9,3 @@ rofi-mode = { git = "https://github.com/SabrinaJewson/rofi-mode.rs" }
 
 [lib]
 crate-type = ["cdylib"]
-
-[workspace]
-members = ["dev"]

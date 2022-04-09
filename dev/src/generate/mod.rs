@@ -1,11 +1,13 @@
 use ::{
-    anyhow::Context as _,
+    anyhow::{ensure, Context as _},
+    clap::Parser,
     serde::{
         de::{self, Deserializer, IntoDeserializer},
         Deserialize,
     },
     std::{
         env,
+        ffi::CStr,
         fmt::{self, Display, Formatter, Write as _},
         fs,
         path::PathBuf,
@@ -15,45 +17,108 @@ use ::{
 
 mod de_ucd;
 
-pub(crate) fn generate() -> anyhow::Result<()> {
+/// Generate `src/generated.rs` from the Unicode data files.
+#[derive(Parser)]
+pub(crate) struct Args {
+    /// URL or fileystem path to the UCD.
+    #[clap(long, default_value = "https://www.unicode.org/Public/UCD/latest/ucd/")]
+    ucd: String,
+}
+
+pub(crate) fn generate(Args { mut ucd }: Args) -> anyhow::Result<()> {
+    if !ucd.ends_with('/') {
+        ucd.push('/');
+    }
+
     let agent = ureq::agent();
 
-    const UNICODE_DATA: &str = "https://www.unicode.org/Public/UCD/latest/ucd/UnicodeData.txt";
-    let unicode_data = download_text(&agent, UNICODE_DATA)?;
-    let lines = de_ucd::lines::<UnicodeDataLine<'_>>(&unicode_data)
+    const UNICODE_DATA: &str = "UnicodeData.txt";
+    const NAME_ALIASES: &str = "NameAliases.txt";
+
+    let unicode_data = load_text(&agent, &*format!("{ucd}{UNICODE_DATA}"))?;
+    let mut unicode_data = de_ucd::lines::<UnicodeDataLine<'_>>(&unicode_data)
         .collect::<Result<Vec<_>, _>>()
-        .context("failed to parse UnicodeData.txt")?;
+        .with_context(|| format!("failed to parse {UNICODE_DATA}"))?;
+
+    let name_aliases = load_text(&agent, &*format!("{ucd}{NAME_ALIASES}"))?;
+    let mut name_aliases = de_ucd::lines::<NameAlias<'_>>(&name_aliases)
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to parse {NAME_ALIASES}"))?;
+
+    // They're probably already sorted but we should just make sure
+    unicode_data.sort_unstable_by_key(|line| line.code_point);
+    name_aliases.sort_unstable_by_key(|line| line.code_point);
 
     let mut result = "use crate::Entry;".to_owned();
 
     result.push_str("pub(super) const ENTRIES: &[Entry] = &[");
-    for line in lines {
-        if line.name.starts_with('<') {
+    let mut name_aliases = name_aliases.into_iter().fuse().peekable();
+    for UnicodeDataLine {
+        code_point, name, ..
+    } in unicode_data
+    {
+        if let Some(next_alias) = name_aliases.peek() {
+            ensure!(
+                next_alias.code_point >= code_point,
+                "NameAlias.txt contains code point U+{code_point} not in UnicodeData.txt",
+            );
+        }
+
+        // Name with Unicode corrections applied, if there are any
+        let mut corrected_name = name;
+        let mut alternate_names = String::new();
+        const ALTERNATE_NAME_SEPARATOR: &str = " / ";
+
+        while let Some(alias) = name_aliases.next_if(|alias| alias.code_point == code_point) {
+            match alias.ty {
+                AliasType::Correction | AliasType::Control | AliasType::Figment => {
+                    corrected_name = alias.value;
+                }
+                AliasType::Alternate | AliasType::Abbreviation => {
+                    alternate_names.push_str(alias.value);
+                    alternate_names.push_str(ALTERNATE_NAME_SEPARATOR);
+                }
+            }
+        }
+
+        if corrected_name.starts_with('<') {
             continue;
         }
 
-        let data = line.code_point;
-        let displayed = format!(
-            "U+{}\t{}\t{}",
-            line.code_point,
-            line.code_point.as_printable().unwrap_or(' '),
-            line.name,
-        );
-        let complete_with = if line.name.is_empty() {
-            format!("U+{}", line.code_point)
+        let printable = code_point.as_printable().unwrap_or(' ');
+        let mut displayed = MarkupAndPlain::new();
+        displayed.push_fmt(format_args!(
+            "U+{code_point}\t{printable}\t{corrected_name}"
+        ));
+        if !alternate_names.is_empty() {
+            for _ in ALTERNATE_NAME_SEPARATOR.chars() {
+                alternate_names.pop();
+            }
+            displayed.push_str(" [");
+            displayed.push_markup_str("<small>");
+            displayed.push_str(&alternate_names);
+            displayed.push_markup_str("</small>");
+            displayed.push_str("]");
+        }
+
+        let complete_with = if corrected_name.is_empty() {
+            format!("U+{}", code_point)
         } else {
-            line.name.to_owned()
+            corrected_name.to_owned()
         };
+
         write!(
             result,
             "Entry {{\
                 data: \"\\u{{{data}}}\",\
                 complete_with: \"{complete_with}\",\
-                displayed: \"{displayed}\",\
+                displayed: \"{displayed_markup}\",\
+                displayed_no_markup: \"{displayed_plain}\",\
             }},",
-            data = data,
+            data = code_point,
             complete_with = complete_with.escape_default(),
-            displayed = displayed.escape_default(),
+            displayed_markup = displayed.markup.escape_default(),
+            displayed_plain = displayed.plain.escape_default(),
         )
         .unwrap();
     }
@@ -90,6 +155,26 @@ struct UnicodeDataLine<'a> {
     _simple_uppercase_mapping: de::IgnoredAny,
     _simple_lowercase_mapping: de::IgnoredAny,
     _simple_titlecase_mapping: de::IgnoredAny,
+}
+
+/// A line of `NameAliases.txt`.
+///
+/// See <http://www.unicode.org/reports/tr44/#NameAliases.txt>.
+#[derive(Deserialize)]
+struct NameAlias<'a> {
+    code_point: CodePoint,
+    value: &'a str,
+    ty: AliasType,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AliasType {
+    Correction,
+    Control,
+    Alternate,
+    Figment,
+    Abbreviation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -166,11 +251,65 @@ impl<'de, E: de::Error> IntoDeserializer<'de, E> for BorrowedStr<'de> {
     }
 }
 
-fn download_text(agent: &ureq::Agent, url: &str) -> anyhow::Result<String> {
-    agent
-        .get(url)
-        .call()
-        .map_err(anyhow::Error::new)
-        .and_then(|res| Ok(res.into_string()?))
-        .with_context(|| format!("failed to download file <{url}>"))
+fn load_text(agent: &ureq::Agent, url_or_path: &str) -> anyhow::Result<String> {
+    if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
+        agent
+            .get(url_or_path)
+            .call()
+            .map_err(anyhow::Error::new)
+            .and_then(|res| Ok(res.into_string()?))
+            .with_context(|| format!("failed to download file <{url_or_path}>"))
+    } else {
+        fs::read_to_string(url_or_path)
+            .with_context(|| format!("failed to read in file {url_or_path}"))
+    }
+}
+
+struct MarkupAndPlain {
+    markup: String,
+    plain: String,
+}
+
+impl MarkupAndPlain {
+    fn new() -> Self {
+        Self {
+            markup: String::new(),
+            plain: String::new(),
+        }
+    }
+    fn push_markup_str(&mut self, s: &str) {
+        self.markup.push_str(s);
+    }
+    fn push_str(&mut self, s: &str) {
+        self.plain.push_str(s);
+        with_glib_markup_escaped(s, |escaped| {
+            self.markup.push_str(escaped);
+        });
+    }
+    fn push_fmt(&mut self, args: fmt::Arguments<'_>) {
+        let old_plain_len = self.plain.len();
+        self.plain.write_fmt(args).unwrap();
+        with_glib_markup_escaped(&self.plain[old_plain_len..], |escaped| {
+            self.markup.push_str(escaped);
+        });
+    }
+}
+
+fn with_glib_markup_escaped<O>(s: &str, f: impl FnOnce(&str) -> O) -> O {
+    let escaped = unsafe { glib_sys::g_markup_escape_text(s.as_ptr().cast(), s.len() as isize) };
+    let escaped_str = unsafe { CStr::from_ptr(escaped) }.to_str().unwrap();
+    let _guard = defer(|| unsafe { glib_sys::g_free(escaped.cast()) });
+    f(escaped_str)
+}
+
+fn defer<F: FnOnce()>(f: F) -> Defer<F> {
+    Defer { function: Some(f) }
+}
+struct Defer<F: FnOnce()> {
+    function: Option<F>,
+}
+impl<F: FnOnce()> Drop for Defer<F> {
+    fn drop(&mut self) {
+        self.function.take().unwrap()();
+    }
 }

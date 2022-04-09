@@ -8,8 +8,10 @@ struct Entry {
     data: &'static str,
     complete_with: &'static str,
     displayed: &'static str,
+    displayed_no_markup: &'static str,
 }
 
+#[rustfmt::skip]
 mod generated;
 
 rofi_mode::export_mode!(Unicode);
@@ -34,8 +36,16 @@ impl Mode<'_> for Unicode {
         generated::ENTRIES.len()
     }
 
+    fn entry_style(&self, _line: usize) -> rofi_mode::Style {
+        rofi_mode::Style::MARKUP
+    }
+
     fn entry_content(&self, line: usize) -> rofi_mode::String {
         rofi_mode::String::from(generated::ENTRIES[line].displayed)
+    }
+
+    fn completed(&self, line: usize) -> rofi_mode::String {
+        rofi_mode::String::from(generated::ENTRIES[line].displayed_no_markup)
     }
 
     fn react(
