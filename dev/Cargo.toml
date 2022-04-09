@@ -1,0 +1,11 @@
+[package]
+name = "dev"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0.56"
+array-init = "2.0.0"
+serde = { version = "1.0.136", features = ["derive"] }
+ureq = "2.4.0"

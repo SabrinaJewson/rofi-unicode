@@ -1,0 +1,14 @@
+[package]
+name = "rofi-unicode"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.56"
+rofi-mode = { git = "https://github.com/SabrinaJewson/rofi-mode.rs" }
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]
+members = ["dev"]
