@@ -67,7 +67,7 @@ pub(crate) fn generate(Args { mut ucd }: Args) -> anyhow::Result<()> {
         // Name with Unicode corrections applied, if there are any
         let mut corrected_name = name;
         let mut alternate_names = String::new();
-        const ALTERNATE_NAME_SEPARATOR: &str = " / ";
+        const ALTERNATE_NAME_SEPARATOR: &str = " | ";
 
         while let Some(alias) = name_aliases.next_if(|alias| alias.code_point == code_point) {
             match alias.ty {
@@ -94,11 +94,10 @@ pub(crate) fn generate(Args { mut ucd }: Args) -> anyhow::Result<()> {
             for _ in ALTERNATE_NAME_SEPARATOR.chars() {
                 alternate_names.pop();
             }
-            displayed.push_str(" [");
+            displayed.push_str(" ");
             displayed.push_markup_str("<small>");
-            displayed.push_str(&alternate_names);
+            displayed.push_fmt(format_args!("({alternate_names})"));
             displayed.push_markup_str("</small>");
-            displayed.push_str("]");
         }
 
         let complete_with = if corrected_name.is_empty() {
