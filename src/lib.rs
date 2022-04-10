@@ -115,6 +115,14 @@ impl Mode<'_> for Unicode {
     }
 
     fn entry_content(&self, line: usize) -> rofi_mode::String {
+        let item = self.item(line);
+        match item.content {
+            Content::Text(_) => rofi_mode::String::from(&*item.name),
+            Content::List(_) => rofi_mode::format!("{}/", item.name),
+        }
+    }
+
+    fn completed(&self, line: usize) -> rofi_mode::String {
         rofi_mode::String::from(&*self.item(line).name)
     }
 
