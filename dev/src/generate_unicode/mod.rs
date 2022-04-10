@@ -57,7 +57,7 @@ pub(crate) fn generate(Args { mut ucd }: Args, output: &Path) -> anyhow::Result<
         name_aliases,
     };
 
-    generate_all(&data, &output.join("all.ron"))?;
+    generate_codepoints(&data, &output.join("codepoints.ron"))?;
 
     Ok(())
 }
@@ -71,7 +71,7 @@ struct UnicodeData<'a> {
     name_aliases: Vec<NameAlias<'a>>,
 }
 
-fn generate_all(data: &UnicodeData<'_>, output: &Path) -> anyhow::Result<()> {
+fn generate_codepoints(data: &UnicodeData<'_>, output: &Path) -> anyhow::Result<()> {
     let mut ron = "{\n".to_owned();
 
     let mut name_aliases = data.name_aliases.iter().fuse().peekable();
