@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 anyhow = "1.0.56"
 clap = { version = "3.1.8", features = ["derive", "env"] }
+dircpy = "0.3.9"
 glib-sys = "0.15.10"
 serde = { version = "1.0.136", features = ["derive"] }
 ureq = "2.4.0"
