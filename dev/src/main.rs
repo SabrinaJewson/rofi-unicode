@@ -4,11 +4,9 @@ use ::{
     std::{
         env,
         ffi::OsStr,
-        fmt::Write as _,
         fs,
         os::unix::ffi::OsStrExt,
         path::{Path, PathBuf},
-        process,
     },
 };
 
