@@ -20,7 +20,11 @@ mod de_ucd;
 #[derive(Parser)]
 pub(crate) struct Args {
     /// URL or fileystem path to the UCD.
-    #[clap(long, default_value = "https://www.unicode.org/Public/UCD/latest/ucd/")]
+    #[clap(
+        long,
+        default_value = "https://www.unicode.org/Public/UCD/latest/ucd/",
+        env
+    )]
     ucd: String,
 }
 
