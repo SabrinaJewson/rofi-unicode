@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn generate(args: GenerateArgs) -> anyhow::Result<()> {
-    unicode::generate(args.ucd, "etc/unicode".as_ref())?;
+    unicode::generate(args.ucd, "etc".as_ref())?;
     Ok(())
 }
 
