@@ -12,3 +12,6 @@ serde = { version = "1.0.136", features = ["derive"] }
 
 [lib]
 crate-type = ["cdylib"]
+
+[workspace]
+members = ["dev"]

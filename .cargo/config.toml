@@ -1,2 +1,2 @@
 [alias]
-dev = "run --manifest-path dev/Cargo.toml --"
+dev = "run --package dev --"
