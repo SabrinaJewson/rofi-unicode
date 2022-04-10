@@ -6,18 +6,17 @@ use ::{
         Deserialize,
     },
     std::{
-        env,
         ffi::CStr,
         fmt::{self, Display, Formatter, Write as _},
         fs,
-        path::PathBuf,
+        path::Path,
         str,
     },
 };
 
 mod de_ucd;
 
-/// Generate `src/generated.rs` from the Unicode data files.
+/// Generate Unicode-related configuration files from Unicode data.
 #[derive(Parser)]
 pub(crate) struct Args {
     /// URL or fileystem path to the UCD.
@@ -25,7 +24,7 @@ pub(crate) struct Args {
     ucd: String,
 }
 
-pub(crate) fn generate(Args { mut ucd }: Args) -> anyhow::Result<()> {
+pub(crate) fn generate(Args { mut ucd }: Args, output: &Path) -> anyhow::Result<()> {
     if !ucd.ends_with('/') {
         ucd.push('/');
     }
@@ -49,13 +48,32 @@ pub(crate) fn generate(Args { mut ucd }: Args) -> anyhow::Result<()> {
     unicode_data.sort_unstable_by_key(|line| line.code_point);
     name_aliases.sort_unstable_by_key(|line| line.code_point);
 
-    let mut result = "use crate::Entry;".to_owned();
+    let data = UnicodeData {
+        unicode_data,
+        name_aliases,
+    };
 
-    result.push_str("pub(super) const ENTRIES: &[Entry] = &[");
-    let mut name_aliases = name_aliases.into_iter().fuse().peekable();
-    for UnicodeDataLine {
+    generate_all(&data, &output.join("all.ron"))?;
+
+    Ok(())
+}
+
+/// All the Unicode data.
+/// Not to be confused with `UnicodeData.txt`,
+/// whose data is contained in a specific field of this type.
+/// Blame Unicode for the poor naming, not me.
+struct UnicodeData<'a> {
+    unicode_data: Vec<UnicodeDataLine<'a>>,
+    name_aliases: Vec<NameAlias<'a>>,
+}
+
+fn generate_all(data: &UnicodeData<'_>, output: &Path) -> anyhow::Result<()> {
+    let mut ron = "{\n".to_owned();
+
+    let mut name_aliases = data.name_aliases.iter().fuse().peekable();
+    for &UnicodeDataLine {
         code_point, name, ..
-    } in unicode_data
+    } in &data.unicode_data
     {
         if let Some(next_alias) = name_aliases.peek() {
             ensure!(
@@ -75,8 +93,10 @@ pub(crate) fn generate(Args { mut ucd }: Args) -> anyhow::Result<()> {
                     corrected_name = alias.value;
                 }
                 AliasType::Alternate | AliasType::Abbreviation => {
+                    if !alternate_names.is_empty() {
+                        alternate_names.push_str(ALTERNATE_NAME_SEPARATOR);
+                    }
                     alternate_names.push_str(alias.value);
-                    alternate_names.push_str(ALTERNATE_NAME_SEPARATOR);
                 }
             }
         }
@@ -86,50 +106,31 @@ pub(crate) fn generate(Args { mut ucd }: Args) -> anyhow::Result<()> {
         }
 
         let printable = code_point.as_printable().unwrap_or(' ');
-        let mut displayed = MarkupAndPlain::new();
-        displayed.push_fmt(format_args!(
-            "U+{code_point}\t{printable}\t{corrected_name}"
-        ));
+
+        let displayed_unescaped = format!("U+{code_point}\t{printable}\t{corrected_name}");
+
+        let mut displayed = with_glib_markup_escaped(&*displayed_unescaped, |s| s.to_owned());
+
         if !alternate_names.is_empty() {
-            for _ in ALTERNATE_NAME_SEPARATOR.chars() {
-                alternate_names.pop();
-            }
-            displayed.push_str(" ");
-            displayed.push_markup_str("<small>");
-            displayed.push_fmt(format_args!("({alternate_names})"));
-            displayed.push_markup_str("</small>");
+            with_glib_markup_escaped(&*alternate_names, |alternate_names| {
+                write!(displayed, " (<small>{alternate_names}</small>)").unwrap();
+            });
         }
 
-        let complete_with = if corrected_name.is_empty() {
-            format!("U+{}", code_point)
-        } else {
-            corrected_name.to_owned()
-        };
-
-        write!(
-            result,
-            "Entry {{\
-                data: \"\\u{{{data}}}\",\
-                complete_with: \"{complete_with}\",\
-                displayed: \"{displayed_markup}\",\
-                displayed_no_markup: \"{displayed_plain}\",\
-            }},",
+        writeln!(
+            ron,
+            "\t\"{displayed}\": \"\\u{{{data}}}\",",
+            displayed = displayed.escape_default(),
             data = code_point,
-            complete_with = complete_with.escape_default(),
-            displayed_markup = displayed.markup.escape_default(),
-            displayed_plain = displayed.plain.escape_default(),
         )
         .unwrap();
     }
-    result.push_str("];");
 
-    let mut generated_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    generated_file_path.pop();
-    generated_file_path.push("src");
-    generated_file_path.push("generated.rs");
-    fs::write(generated_file_path, result).context("failed to write generated.rs")?;
+    ron.push_str("}\n");
 
-    println!("Successfully wrote to generated.rs");
+    write_file(output, ron)?;
+
+    println!("Successfully wrote to {}", output.display());
 
     Ok(())
 }
@@ -264,34 +265,16 @@ fn load_text(agent: &ureq::Agent, url_or_path: &str) -> anyhow::Result<String> {
     }
 }
 
-struct MarkupAndPlain {
-    markup: String,
-    plain: String,
-}
+fn write_file(path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
 
-impl MarkupAndPlain {
-    fn new() -> Self {
-        Self {
-            markup: String::new(),
-            plain: String::new(),
-        }
-    }
-    fn push_markup_str(&mut self, s: &str) {
-        self.markup.push_str(s);
-    }
-    fn push_str(&mut self, s: &str) {
-        self.plain.push_str(s);
-        with_glib_markup_escaped(s, |escaped| {
-            self.markup.push_str(escaped);
-        });
-    }
-    fn push_fmt(&mut self, args: fmt::Arguments<'_>) {
-        let old_plain_len = self.plain.len();
-        self.plain.write_fmt(args).unwrap();
-        with_glib_markup_escaped(&self.plain[old_plain_len..], |escaped| {
-            self.markup.push_str(escaped);
-        });
-    }
+    fs::write(path, data).with_context(|| format!("failed to write to {}", path.display()))?;
+
+    Ok(())
 }
 
 fn with_glib_markup_escaped<O>(s: &str, f: impl FnOnce(&str) -> O) -> O {
