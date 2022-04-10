@@ -20,6 +20,7 @@ pub(crate) struct Config {
 pub(crate) struct Item {
     pub(crate) name: String,
     pub(crate) name_attributes: Vec<pango::Attribute>,
+    pub(crate) name_markup: String,
     pub(crate) content: Content,
 }
 
@@ -70,6 +71,7 @@ fn resolve(
         resolved.push(Item {
             name: name.into(),
             name_attributes: name_attribute_list.attributes(),
+            name_markup: unresolved_item.name,
             content,
         });
     }

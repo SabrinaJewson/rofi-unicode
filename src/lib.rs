@@ -23,13 +23,23 @@ impl Unicode {
 }
 
 struct List {
-    parent: Option<usize>,
+    index: Option<ItemIndex>,
     items: Box<[Item]>,
+}
+
+/// An index of a specific [`Item`] in the [`Unicode`].
+#[derive(Clone, Copy)]
+struct ItemIndex {
+    /// The index of the item's list in `Unicode::lists`.
+    list: usize,
+    /// The index of the item in its `List::items`.
+    index: usize,
 }
 
 struct Item {
     name: String,
     name_attributes: Vec<pango::Attribute>,
+    name_markup: String,
     content: Content,
 }
 
@@ -50,22 +60,35 @@ impl Unicode {
     }
 }
 
-fn register_items(items: Vec<config::Item>, lists: &mut Vec<List>, parent: Option<usize>) -> usize {
+fn register_items(
+    items: Vec<config::Item>,
+    lists: &mut Vec<List>,
+    index: Option<ItemIndex>,
+) -> usize {
     let list_index = lists.len();
     lists.push(List {
-        parent,
+        index,
         items: Box::new([]),
     });
 
     lists[list_index].items = items
         .into_iter()
-        .map(|config_item| Item {
+        .enumerate()
+        .map(|(index, config_item)| Item {
             name: config_item.name,
             name_attributes: config_item.name_attributes,
+            name_markup: config_item.name_markup,
             content: match config_item.content {
                 config::Content::Text(text) => Content::Text(text),
                 config::Content::Items(nested) => {
-                    let index = register_items(nested, lists, Some(list_index));
+                    let index = register_items(
+                        nested,
+                        lists,
+                        Some(ItemIndex {
+                            list: list_index,
+                            index,
+                        }),
+                    );
                     Content::List(index)
                 }
             },
@@ -102,8 +125,8 @@ impl Mode<'_> for Unicode {
     ) -> rofi_mode::Action {
         match event {
             rofi_mode::Event::Cancel { .. } => {
-                if let Some(parent) = self.active_list().parent {
-                    self.active_list = parent;
+                if let Some(index) = self.active_list().index {
+                    self.active_list = index.list;
                     rofi_mode::Action::Reload
                 } else {
                     rofi_mode::Action::Exit
@@ -138,6 +161,20 @@ impl Mode<'_> for Unicode {
 
     fn matches(&self, line: usize, matcher: rofi_mode::Matcher<'_>) -> bool {
         matcher.matches(&*self.item(line).name)
+    }
+
+    fn message(&mut self) -> rofi_mode::String {
+        let mut index = self.active_list().index;
+        let mut message = rofi_mode::String::new();
+        while let Some(item_index) = index {
+            if !message.is_empty() {
+                message.push_str(" / ");
+            }
+            let list = &self.lists[item_index.list];
+            message.push_str(&list.items[item_index.index].name_markup);
+            index = list.index;
+        }
+        message
     }
 }
 
