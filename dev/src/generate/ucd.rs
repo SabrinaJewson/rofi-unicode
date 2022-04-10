@@ -1,36 +1,25 @@
-use ::{
-    anyhow::{ensure, Context as _},
-    serde::{
-        de::{self, Deserializer, IntoDeserializer},
-        Deserialize,
-    },
-    std::{
-        ffi::CStr,
-        fmt::{self, Display, Formatter, Write as _},
-        fs,
-        path::Path,
-        str,
+use {
+    super::{de_ucd, with_glib_markup_escaped, Content, Item, Items, Opts},
+    ::{
+        anyhow::Context as _,
+        serde::{
+            de::{self, Deserializer, IntoDeserializer},
+            Deserialize,
+        },
+        std::fmt::{self, Display, Formatter, Write as _},
     },
 };
 
-mod de_ucd;
+pub(super) fn generate(opts: &Opts<'_>) -> anyhow::Result<()> {
+    const UNICODE_DATA: &str = "Public/UCD/latest/ucd/UnicodeData.txt";
+    const NAME_ALIASES: &str = "Public/UCD/latest/ucd/NameAliases.txt";
 
-pub(crate) fn generate(mut ucd: String, out_dir: &Path) -> anyhow::Result<()> {
-    if !ucd.ends_with('/') {
-        ucd.push('/');
-    }
-
-    let agent = ureq::agent();
-
-    const UNICODE_DATA: &str = "UnicodeData.txt";
-    const NAME_ALIASES: &str = "NameAliases.txt";
-
-    let unicode_data = load_text(&agent, &*format!("{ucd}{UNICODE_DATA}"))?;
+    let unicode_data = opts.load_text(UNICODE_DATA)?;
     let mut unicode_data = de_ucd::lines::<UnicodeDataLine<'_>>(&unicode_data)
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("failed to parse {UNICODE_DATA}"))?;
 
-    let name_aliases = load_text(&agent, &*format!("{ucd}{NAME_ALIASES}"))?;
+    let name_aliases = opts.load_text(NAME_ALIASES)?;
     let mut name_aliases = de_ucd::lines::<NameAlias<'_>>(&name_aliases)
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("failed to parse {NAME_ALIASES}"))?;
@@ -44,7 +33,7 @@ pub(crate) fn generate(mut ucd: String, out_dir: &Path) -> anyhow::Result<()> {
         name_aliases,
     };
 
-    generate_codepoints(&data, &out_dir.join("codepoints.ron"))?;
+    opts.write_ron("codepoints.ron", generate_codepoints(&data)?)?;
 
     Ok(())
 }
@@ -58,8 +47,8 @@ struct UnicodeData<'a> {
     name_aliases: Vec<NameAlias<'a>>,
 }
 
-fn generate_codepoints(data: &UnicodeData<'_>, output: &Path) -> anyhow::Result<()> {
-    let mut ron = "{\n".to_owned();
+fn generate_codepoints(data: &UnicodeData<'_>) -> anyhow::Result<Items> {
+    let mut items = Vec::new();
 
     let mut name_aliases = data.name_aliases.iter().fuse().peekable();
     for &UnicodeDataLine {
@@ -67,7 +56,7 @@ fn generate_codepoints(data: &UnicodeData<'_>, output: &Path) -> anyhow::Result<
     } in &data.unicode_data
     {
         if let Some(next_alias) = name_aliases.peek() {
-            ensure!(
+            anyhow::ensure!(
                 next_alias.code_point >= code_point,
                 "NameAlias.txt contains code point U+{code_point} not in UnicodeData.txt",
             );
@@ -95,35 +84,32 @@ fn generate_codepoints(data: &UnicodeData<'_>, output: &Path) -> anyhow::Result<
         if corrected_name.starts_with('<') {
             continue;
         }
+        let scalar_value = match char::from_u32(code_point.0) {
+            Some(scalar_value) => scalar_value,
+            None => continue,
+        };
 
-        let printable = code_point.as_printable().unwrap_or(' ');
+        let printable = if scalar_value.is_control() {
+            ' '
+        } else {
+            scalar_value
+        };
 
-        let displayed_unescaped = format!("U+{code_point}\t{printable}\t{corrected_name}");
-
-        let mut displayed = with_glib_markup_escaped(&*displayed_unescaped, |s| s.to_owned());
-
+        let name_unescaped = format!("U+{code_point}\t{printable}\t{corrected_name}");
+        let mut name = with_glib_markup_escaped(&*name_unescaped, |s| s.to_owned());
         if !alternate_names.is_empty() {
             with_glib_markup_escaped(&*alternate_names, |alternate_names| {
-                write!(displayed, " (<small>{alternate_names}</small>)").unwrap();
+                write!(name, " (<small>{alternate_names}</small>)").unwrap();
             });
         }
 
-        writeln!(
-            ron,
-            "\t\"{displayed}\": \"\\u{{{data}}}\",",
-            displayed = displayed.escape_default(),
-            data = code_point,
-        )
-        .unwrap();
+        items.push(Item {
+            name,
+            content: Content::Text(scalar_value.to_string()),
+        });
     }
 
-    ron.push_str("}\n");
-
-    write_file(output, ron)?;
-
-    println!("Successfully wrote to {}", output.display());
-
-    Ok(())
+    Ok(Items::from_direct(items))
 }
 
 /// A line of `UnicodeData.txt`.
@@ -170,12 +156,6 @@ enum AliasType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct CodePoint(u32);
-
-impl CodePoint {
-    fn as_printable(self) -> Option<char> {
-        char::from_u32(self.0).filter(|c| !c.is_control())
-    }
-}
 
 impl<'de> Deserialize<'de> for CodePoint {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -239,50 +219,5 @@ impl<'de, E: de::Error> IntoDeserializer<'de, E> for BorrowedStr<'de> {
     type Deserializer = de::value::BorrowedStrDeserializer<'de, E>;
     fn into_deserializer(self) -> Self::Deserializer {
         de::value::BorrowedStrDeserializer::new(self.0)
-    }
-}
-
-fn load_text(agent: &ureq::Agent, url_or_path: &str) -> anyhow::Result<String> {
-    if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
-        agent
-            .get(url_or_path)
-            .call()
-            .map_err(anyhow::Error::new)
-            .and_then(|res| Ok(res.into_string()?))
-            .with_context(|| format!("failed to download file <{url_or_path}>"))
-    } else {
-        fs::read_to_string(url_or_path)
-            .with_context(|| format!("failed to read in file {url_or_path}"))
-    }
-}
-
-fn write_file(path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> anyhow::Result<()> {
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory {}", parent.display()))?;
-    }
-
-    fs::write(path, data).with_context(|| format!("failed to write to {}", path.display()))?;
-
-    Ok(())
-}
-
-fn with_glib_markup_escaped<O>(s: &str, f: impl FnOnce(&str) -> O) -> O {
-    let escaped = unsafe { glib_sys::g_markup_escape_text(s.as_ptr().cast(), s.len() as isize) };
-    let escaped_str = unsafe { CStr::from_ptr(escaped) }.to_str().unwrap();
-    let _guard = defer(|| unsafe { glib_sys::g_free(escaped.cast()) });
-    f(escaped_str)
-}
-
-fn defer<F: FnOnce()>(f: F) -> Defer<F> {
-    Defer { function: Some(f) }
-}
-struct Defer<F: FnOnce()> {
-    function: Option<F>,
-}
-impl<F: FnOnce()> Drop for Defer<F> {
-    fn drop(&mut self) {
-        self.function.take().unwrap()();
     }
 }

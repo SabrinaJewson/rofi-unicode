@@ -10,25 +10,13 @@ use ::{
     },
 };
 
-mod unicode;
+mod generate;
 
 /// Helper for developing and installing rofi-unicode
 #[derive(Parser)]
 enum Args {
-    Generate(GenerateArgs),
+    Generate(generate::Args),
     Install(InstallArgs),
-}
-
-/// Generate all the system-wide default configuration files and put them in `./etc`.
-#[derive(Parser)]
-pub struct GenerateArgs {
-    /// URL or fileystem path to the UCD.
-    #[clap(
-        long,
-        default_value = "https://www.unicode.org/Public/UCD/latest/ucd/",
-        env
-    )]
-    ucd: String,
 }
 
 /// Install `rofi-unicode` to the system.
@@ -52,14 +40,9 @@ fn main() -> anyhow::Result<()> {
     env::set_current_dir(workspace_root).context("failed to set current dir")?;
 
     match Args::parse() {
-        Args::Generate(args) => generate(args),
+        Args::Generate(args) => generate::generate(args),
         Args::Install(args) => install(args),
     }
-}
-
-fn generate(args: GenerateArgs) -> anyhow::Result<()> {
-    unicode::generate(args.ucd, "etc".as_ref())?;
-    Ok(())
 }
 
 fn install(
