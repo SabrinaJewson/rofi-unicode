@@ -173,16 +173,16 @@ impl Mode<'_> for Unicode {
 
     fn message(&mut self) -> rofi_mode::String {
         let mut index = self.active_list().index;
-        let mut message = rofi_mode::String::new();
+        let mut parts = Vec::new();
         while let Some(item_index) = index {
-            if !message.is_empty() {
-                message.push_str(" / ");
+            if !parts.is_empty() {
+                parts.push(" / ");
             }
             let list = &self.lists[item_index.list];
-            message.push_str(&list.items[item_index.index].name_markup);
+            parts.push(&list.items[item_index.index].name_markup);
             index = list.index;
         }
-        message
+        parts.into_iter().rev().collect()
     }
 }
 
