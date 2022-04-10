@@ -14,12 +14,12 @@ pub(super) fn generate(opts: &Opts<'_>) -> anyhow::Result<()> {
     const UNICODE_DATA: &str = "Public/UCD/latest/ucd/UnicodeData.txt";
     const NAME_ALIASES: &str = "Public/UCD/latest/ucd/NameAliases.txt";
 
-    let unicode_data = opts.load_text(UNICODE_DATA)?;
+    let unicode_data = opts.load_text_unicode(UNICODE_DATA)?;
     let mut unicode_data = de_ucd::lines::<UnicodeDataLine<'_>>(&unicode_data)
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("failed to parse {UNICODE_DATA}"))?;
 
-    let name_aliases = opts.load_text(NAME_ALIASES)?;
+    let name_aliases = opts.load_text_unicode(NAME_ALIASES)?;
     let mut name_aliases = de_ucd::lines::<NameAlias<'_>>(&name_aliases)
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("failed to parse {NAME_ALIASES}"))?;
@@ -107,6 +107,10 @@ fn generate_codepoints(data: &UnicodeData<'_>) -> anyhow::Result<Items> {
             name,
             content: Content::Text(scalar_value.to_string()),
         });
+    }
+
+    if let Some(extra_alias) = name_aliases.next() {
+        anyhow::bail!("unexpected extra alias for U+{}", extra_alias.code_point);
     }
 
     Ok(Items::from_direct(items))

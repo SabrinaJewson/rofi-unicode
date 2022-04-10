@@ -6,6 +6,7 @@ use ::{
 };
 
 mod de_ucd;
+mod emoji;
 mod ucd;
 
 /// Generate all the system-wide default configuration files and put them in `./etc`.
@@ -28,6 +29,7 @@ pub(crate) fn generate(Args { mut unicode }: Args) -> anyhow::Result<()> {
     };
 
     ucd::generate(&opts)?;
+    emoji::generate(&opts)?;
 
     Ok(())
 }
@@ -39,7 +41,7 @@ struct Opts<'a> {
 }
 
 impl Opts<'_> {
-    fn load_text(&self, path: &str) -> anyhow::Result<String> {
+    fn load_text_unicode(&self, path: &str) -> anyhow::Result<String> {
         let place = format!("{}{path}", self.unicode);
 
         if place.starts_with("http://") || place.starts_with("https://") {
