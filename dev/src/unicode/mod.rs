@@ -1,6 +1,5 @@
 use ::{
     anyhow::{ensure, Context as _},
-    clap::Parser,
     serde::{
         de::{self, Deserializer, IntoDeserializer},
         Deserialize,
@@ -16,19 +15,7 @@ use ::{
 
 mod de_ucd;
 
-/// Generate Unicode-related configuration files from Unicode data.
-#[derive(Parser)]
-pub(crate) struct Args {
-    /// URL or fileystem path to the UCD.
-    #[clap(
-        long,
-        default_value = "https://www.unicode.org/Public/UCD/latest/ucd/",
-        env
-    )]
-    ucd: String,
-}
-
-pub(crate) fn generate(Args { mut ucd }: Args, output: &Path) -> anyhow::Result<()> {
+pub(crate) fn generate(mut ucd: String, out_dir: &Path) -> anyhow::Result<()> {
     if !ucd.ends_with('/') {
         ucd.push('/');
     }
@@ -57,7 +44,7 @@ pub(crate) fn generate(Args { mut ucd }: Args, output: &Path) -> anyhow::Result<
         name_aliases,
     };
 
-    generate_codepoints(&data, &output.join("codepoints.ron"))?;
+    generate_codepoints(&data, &out_dir.join("codepoints.ron"))?;
 
     Ok(())
 }
