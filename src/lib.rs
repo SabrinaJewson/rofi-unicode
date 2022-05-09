@@ -135,6 +135,7 @@ impl Mode<'_> for Unicode {
             rofi_mode::Event::Cancel { .. } => {
                 if let Some(index) = self.active_list().index {
                     self.active_list = index.list;
+                    input.clear();
                     rofi_mode::Action::Reload
                 } else {
                     rofi_mode::Action::Exit
