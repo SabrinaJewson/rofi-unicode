@@ -1,5 +1,6 @@
 use ::{
     anyhow::{anyhow, Context as _},
+    rofi_mode::pango,
     serde::{
         de::{self, Deserializer},
         Deserialize,

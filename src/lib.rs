@@ -1,6 +1,6 @@
 use ::{
     anyhow::Context as _,
-    rofi_mode::Mode,
+    rofi_mode::{pango, Mode},
     std::{io::Write, process},
 };
 
@@ -100,9 +100,9 @@ fn register_items(
 
 impl Mode<'_> for Unicode {
     const NAME: &'static str = "unicode-selector\0";
-    const DISPLAY_NAME: &'static str = "unicode\0";
 
-    fn init(_api: rofi_mode::Api<'_>) -> Result<Self, ()> {
+    fn init(mut api: rofi_mode::Api<'_>) -> Result<Self, ()> {
+        api.set_display_name("unicode");
         Self::try_init().map_err(|e| eprintln!("Error: {e:?}"))
     }
 

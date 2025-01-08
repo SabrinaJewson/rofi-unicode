@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.56"
-rofi-mode = { git = "https://github.com/SabrinaJewson/rofi-mode.rs" }
+pango = { version = "0.19.2", features = ["v1_50"] }
+rofi-mode = "0.4.1"
 ron = "0.7.0"
-pango = { version = "0.15.10", features = ["v1_50"] }
 serde = { version = "1.0.136", features = ["derive"] }
 
 [lib]
