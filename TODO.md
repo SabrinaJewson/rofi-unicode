@@ -1,0 +1,7 @@
+- Blocks
+- Annotations:
+	- https://github.com/unicode-org/cldr-json/blob/main/cldr-json/cldr-annotations-modern/annotations/en/annotations.json
+- Unihan support
+	- https://www.unicode.org/reports/tr38/
+- Fontawesome support
+	- https://fontawesome.com/docs/apis/graphql/query-fields
